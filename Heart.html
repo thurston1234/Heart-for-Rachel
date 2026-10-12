@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Heart</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      font-family: Arial, Helvetica, sans-serif;
+    }
+    canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      background: #000;
+    }
+    .hint {
+      position: fixed;
+      left: 50%;
+      bottom: 18px;
+      transform: translateX(-50%);
+      color: rgba(255, 120, 120, 0.55);
+      font-size: 12px;
+      letter-spacing: 2px;
+      user-select: none;
+      pointer-events: none;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <div class="hint">I Love You</div>
+
+  <script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+
+    let CANVAS_WIDTH = window.innerWidth;
+    let CANVAS_HEIGHT = window.innerHeight;
+    let CANVAS_CENTER_X = CANVAS_WIDTH / 2;
+    let CANVAS_CENTER_Y = CANVAS_HEIGHT / 2;
+
+    const DPR = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    const HEART_COLOR = '#ff69b4';
+    const OUTER_GLOW = 'rgba(255, 105, 180, 0.28)';
+    const FRAME_COUNT = 24;
+    const BASE_POINTS = 2200;
+    const EXTRA_EDGE_SCATTER = 3;
+    const CENTER_SCATTER_COUNT = 4500;
+
+    let IMAGE_ENLARGE = Math.min(CANVAS_WIDTH, CANVAS_HEIGHT) / 42;
+    let clickBoost = 0;
+
+    function resizeCanvas() {
+      CANVAS_WIDTH = window.innerWidth;
+      CANVAS_HEIGHT = window.innerHeight;
+      CANVAS_CENTER_X = CANVAS_WIDTH / 2;
+      CANVAS_CENTER_Y = CANVAS_HEIGHT / 2;
+      IMAGE_ENLARGE = Math.min(CANVAS_WIDTH, CANVAS_HEIGHT) / 42;
+
+      canvas.width = Math.floor(CANVAS_WIDTH * DPR);
+      canvas.height = Math.floor(CANVAS_HEIGHT * DPR);
+      canvas.style.width = CANVAS_WIDTH + 'px';
+      canvas.style.height = CANVAS_HEIGHT + 'px';
+      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    }
+
+    function rand(min, max) {
+      return Math.random() * (max - min) + min;
+    }
+
+    function randint(min, max) {
+      return Math.floor(rand(min, max + 1));
+    }
+
+    function heartFunction(t, shrinkRatio = IMAGE_ENLARGE) {
+      let x = 16 * Math.pow(Math.sin(t), 3);
+      let y = -(13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t));
+
+      x *= shrinkRatio;
+      y *= shrinkRatio;
+
+      x += CANVAS_CENTER_X;
+      y += CANVAS_CENTER_Y;
+
+      return [x, y];
+    }
+
+    function shrink(x, y, ratio) {
+      const dx0 = x - CANVAS_CENTER_X;
+      const dy0 = y - CANVAS_CENTER_Y;
+      const dist = Math.pow(dx0 * dx0 + dy0 * dy0, 0.6) || 1;
+      const force = -1 / dist;
+      const dx = ratio * force * dx0;
+      const dy = ratio * force * dy0;
+      return [x - dx, y - dy];
+    }
+
+    function scatterInside(x, y, beta = 0.15) {
+      const ratioX = -beta * Math.log(Math.random());
+      const ratioY = -beta * Math.log(Math.random());
+      const dx = ratioX * (x - CANVAS_CENTER_X);
+      const dy = ratioY * (y - CANVAS_CENTER_Y);
+      return [x - dx, y - dy];
+    }
+
+    function curve(p) {
+      return 2 * (2 * Math.sin(4 * p)) / (2 * Math.PI);
+    }
+
+    class Heart {
+      constructor(generateFrame = FRAME_COUNT) {
+        this.points = [];
+        this.edgeDiffusionPoints = [];
+        this.centerDiffusionPoints = [];
+        this.allPoints = new Map();
+        this.generateFrame = generateFrame;
+        this.build(BASE_POINTS);
+        for (let frame = 0; frame < generateFrame; frame++) {
+          this.calc(frame);
+        }
+      }
+
+      build(number) {
+        this.points = [];
+        this.edgeDiffusionPoints = [];
+        this.centerDiffusionPoints = [];
+
+        for (let i = 0; i < number; i++) {
+          const t = rand(0, Math.PI * 2);
+          const [x, y] = heartFunction(t);
+          this.points.push([x, y]);
+        }
+
+        for (const [x0, y0] of this.points) {
+          for (let i = 0; i < EXTRA_EDGE_SCATTER; i++) {
+            this.edgeDiffusionPoints.push(scatterInside(x0, y0, 0.05));
+          }
+        }
+
+        for (let i = 0; i < CENTER_SCATTER_COUNT; i++) {
+          const [x0, y0] = this.points[randint(0, this.points.length - 1)];
+          this.centerDiffusionPoints.push(scatterInside(x0, y0, 0.17));
+        }
+      }
+
+      calcPosition(x, y, ratio) {
+        const dx0 = x - CANVAS_CENTER_X;
+        const dy0 = y - CANVAS_CENTER_Y;
+        const force = 1 / (Math.pow(dx0 * dx0 + dy0 * dy0, 0.52) || 1);
+        const dx = ratio * force * dx0 + randint(-1, 1);
+        const dy = ratio * force * dy0 + randint(-1, 1);
+        return [x - dx, y - dy];
+      }
+
+      calc(frame) {
+        const ratio = 10 * curve((frame / 10) * Math.PI);
+        const dynamicBoost = clickBoost * 0.8;
+
+        const haloRadius = Math.max(4, Math.floor(4 + 6 * (1 + curve((frame / 10) * Math.PI)) + dynamicBoost * 0.35));
+        const haloNumber = Math.max(1500, Math.floor(3000 + 4000 * Math.abs(Math.pow(curve((frame / 10) * Math.PI), 2)) + dynamicBoost * 200));
+
+        const allPoints = [];
+        const heartHaloPoint = new Set();
+
+        for (let i = 0; i < haloNumber; i++) {
+          const t = rand(0, Math.PI * 2);
+          let [x, y] = heartFunction(t, IMAGE_ENLARGE * 1.055);
+          [x, y] = shrink(x, y, haloRadius);
+          const key = `${Math.round(x)},${Math.round(y)}`;
+          if (!heartHaloPoint.has(key)) {
+            heartHaloPoint.add(key);
+            x += randint(-14, 14);
+            y += randint(-14, 14);
+            const size = [1, 2, 2][randint(0, 2)];
+            const alpha = rand(0.20, 0.55);
+            allPoints.push([x, y, size, alpha]);
+          }
+        }
+
+        for (const [x0, y0] of this.points) {
+          const [x, y] = this.calcPosition(x0, y0, ratio + dynamicBoost);
+          const size = randint(1, 3);
+          const alpha = rand(0.55, 0.95);
+          allPoints.push([x, y, size, alpha]);
+        }
+
+        for (const [x0, y0] of this.edgeDiffusionPoints) {
+          const [x, y] = this.calcPosition(x0, y0, ratio + dynamicBoost * 0.7);
+          const size = randint(1, 2);
+          const alpha = rand(0.30, 0.75);
+          allPoints.push([x, y, size, alpha]);
+        }
+
+        for (const [x0, y0] of this.centerDiffusionPoints) {
+          const [x, y] = this.calcPosition(x0, y0, ratio + dynamicBoost * 0.55);
+          const size = randint(1, 2);
+          const alpha = rand(0.18, 0.55);
+          allPoints.push([x, y, size, alpha]);
+        }
+
+        this.allPoints.set(frame, allPoints);
+      }
+
+      render(frame) {
+        const points = this.allPoints.get(frame % this.generateFrame) || [];
+
+        ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+        ctx.shadowBlur = 8;
+        ctx.shadowColor = OUTER_GLOW;
+
+        for (const [x, y, size, alpha] of points) {
+          ctx.fillStyle = `rgba(255, 105, 180, ${alpha})`;
+          ctx.fillRect(x, y, size, size);
+        }
+
+        ctx.shadowBlur = 0;
+      }
+    }
+
+    let heart;
+    let logicalFrame = 0;
+    let lastFrameAt = 0;
+    const FRAME_INTERVAL = 70;
+
+    function rebuildHeart() {
+      resizeCanvas();
+      heart = new Heart(FRAME_COUNT);
+    }
+
+    function animate(ts) {
+      if (!lastFrameAt) lastFrameAt = ts;
+      if (ts - lastFrameAt >= FRAME_INTERVAL) {
+        if (clickBoost > 0.01) {
+          clickBoost *= 0.92;
+        } else {
+          clickBoost = 0;
+        }
+
+        heart.calc(logicalFrame % FRAME_COUNT);
+        heart.render(logicalFrame);
+        logicalFrame++;
+        lastFrameAt = ts;
+      }
+      requestAnimationFrame(animate);
+    }
+
+    function triggerPulse() {
+      clickBoost = Math.min(clickBoost + 10, 18);
+      for (let i = 0; i < FRAME_COUNT; i++) {
+        heart.calc(i);
+      }
+    }
+
+    window.addEventListener('resize', () => {
+      rebuildHeart();
+    });
+
+    window.addEventListener('click', triggerPulse);
+    window.addEventListener('touchstart', triggerPulse, { passive: true });
+
+    rebuildHeart();
+    requestAnimationFrame(animate);
+  </script>
+</body>
+</html>
